@@ -27,14 +27,26 @@ change, moves sound to another speaker while the screen is away, and switches ba
 
 ## Install
 
-### 1. Install Rust (once)
+### Easiest: download the app
+
+1. Download `ScreenKnob-<version>.dmg` from the [Releases page](https://github.com/davemadan/screenknob/releases).
+2. Open it and drag **ScreenKnob** onto **Applications**.
+3. Open ScreenKnob from Applications. macOS will say it can't check the app (it's signed locally,
+   not by Apple). Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**
+   next to ScreenKnob, then confirm.
+   (Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/ScreenKnob.app`.)
+4. Optional: install BlackHole 2ch for the native popup (see step 2 below), then read *First launch*.
+
+### Or build it yourself
+
+#### 1. Install Rust (once)
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 source "$HOME/.cargo/env"
 ```
 
-### 2. Optional: install BlackHole 2ch (for the native popup)
+#### 2. Optional: install BlackHole 2ch (for the native popup)
 
 With [Homebrew](https://brew.sh):
 
@@ -44,7 +56,7 @@ brew install blackhole-2ch
 
 or download the installer from the BlackHole page. You may need to restart your Mac afterwards.
 
-### 3. Build and install ScreenKnob
+#### 3. Build and install ScreenKnob
 
 ```sh
 git clone https://github.com/davemadan/screenknob.git
@@ -53,12 +65,12 @@ cd screenknob
 ```
 
 This builds `ScreenKnob.app` and copies it to your Applications folder. To only build it (into
-`dist/ScreenKnob.app`), leave out `--install`.
+`dist/ScreenKnob.app`), leave out `--install`. `./scripts/make-dmg.sh` also makes the
+downloadable disk image in `release/`.
 
-### 4. First launch
+### First launch
 
-Open **ScreenKnob** from Applications. The first time, macOS says it's from an unidentified
-developer (it's signed locally, not by Apple): right-click the app → **Open** → **Open**.
+Open **ScreenKnob** from Applications (a copy you built yourself opens straight away).
 
 ScreenKnob asks for two permissions. Both are needed for screens without a volume control:
 
@@ -69,7 +81,7 @@ ScreenKnob asks for two permissions. Both are needed for screens without a volum
 
 ScreenKnob doesn't use the microphone.
 
-### 5. Start at login (optional)
+### Start at login (optional)
 
 System Settings → General → **Login Items** → **+** → choose ScreenKnob.
 
