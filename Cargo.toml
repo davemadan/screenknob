@@ -2,7 +2,7 @@
 name = "screenknob"
 description = "Volume control, keys and the macOS volume popup for HDMI and DisplayPort screens"
 license = "MIT"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -21,3 +21,7 @@ winit = { version = "0.30", default-features = false }
 
 [profile.release]
 opt-level = 3
+
+[[example]]
+name = "make_icon"
+path = "icon/make_icon.rs"

@@ -161,6 +161,7 @@ pub fn run_as_own_app() -> Option<i32> {
 
 const SIGN_ID: &str = "craft.monitor-volume";
 const INFO_PLIST: &str = include_str!("../Info.plist");
+const APP_ICON: &[u8] = include_bytes!("../icon/AppIcon.icns");
 
 /// Keeps "ScreenKnob.app" next to this program up to date with it (copied
 /// only when it changed), signed with a fixed identity and known to macOS.
@@ -174,9 +175,15 @@ fn app_bundle(exe: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     std::fs::create_dir_all(&macos)?;
 
     let plist = bundle.join("Contents/Info.plist");
-    let plist_changed = std::fs::read_to_string(&plist).map(|p| p != INFO_PLIST).unwrap_or(true);
+    let mut plist_changed = std::fs::read_to_string(&plist).map(|p| p != INFO_PLIST).unwrap_or(true);
     if plist_changed {
         std::fs::write(&plist, INFO_PLIST)?;
+    }
+    let icon = bundle.join("Contents/Resources/AppIcon.icns");
+    if std::fs::read(&icon).map(|i| i != APP_ICON).unwrap_or(true) {
+        std::fs::create_dir_all(bundle.join("Contents/Resources"))?;
+        std::fs::write(&icon, APP_ICON)?;
+        plist_changed = true; // re-sign below
     }
     let new = std::fs::read(exe)?;
     // The stamp must live outside the bundle: anything extra inside breaks its signature.

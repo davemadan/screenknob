@@ -1,3 +1,5 @@
+<img src="icon/ScreenKnob.png" width="128" alt="ScreenKnob icon">
+
 # ScreenKnob
 
 A small macOS menu bar app that gives **HDMI and DisplayPort screens a working volume control**:

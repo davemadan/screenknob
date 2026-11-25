@@ -9,8 +9,9 @@ cargo build --release
 
 APP=dist/ScreenKnob.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
+cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp target/release/screenknob "$APP/Contents/MacOS/screenknob"
 
 # Local (ad-hoc) signature with a fixed identity, so the permissions you grant
