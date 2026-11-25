@@ -1,0 +1,7 @@
+/target
+/dist
+/shots
+/examples
+# Notes from studying another app while building this one; not part of the project.
+MECHANICS.md
+mechanics.json
