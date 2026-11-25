@@ -1,13 +1,15 @@
 #!/bin/sh
-# Builds ScreenKnob.app into dist/ (optionally installs it into /Applications).
-#   ./scripts/make-app.sh            build dist/ScreenKnob.app
+# Builds ScreenKnob.app into target/bundle.noindex/ (optionally installs it into
+# /Applications). The ".noindex" folder keeps this copy out of Spotlight and the
+# Apps list, so only the installed one shows there.
+#   ./scripts/make-app.sh            build target/bundle.noindex/ScreenKnob.app
 #   ./scripts/make-app.sh --install  also copy it to /Applications
 set -eu
 cd "$(dirname "$0")/.."
 
 cargo build --release
 
-APP=dist/ScreenKnob.app
+APP=target/bundle.noindex/ScreenKnob.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"

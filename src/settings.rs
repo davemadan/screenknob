@@ -28,6 +28,8 @@ pub struct Settings {
     /// Route screens through a virtual speaker (BlackHole) so macOS shows its own
     /// volume popup and click, as for a real speaker.
     pub native_popup: bool,
+    /// Opening at login was set up once already (it's on by default when installed).
+    pub login_set_up: bool,
     pub volumes: HashMap<String, DeviceVolume>,
 }
 
@@ -39,6 +41,7 @@ impl Default for Settings {
             software_volume: true,
             volume_keys: true,
             native_popup: true,
+            login_set_up: false,
             volumes: HashMap::new(),
         }
     }

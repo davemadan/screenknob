@@ -67,8 +67,8 @@ cd screenknob
 ```
 
 This builds `ScreenKnob.app` and copies it to your Applications folder. To only build it (into
-`dist/ScreenKnob.app`), leave out `--install`. `./scripts/make-dmg.sh` also makes the
-downloadable disk image in `release/`.
+`target/bundle.noindex/ScreenKnob.app`), leave out `--install`. `./scripts/make-dmg.sh` also makes the
+downloadable disk image and a zip in `release/`.
 
 ### First launch
 
@@ -83,9 +83,11 @@ ScreenKnob asks for two permissions. Both are needed for screens without a volum
 
 ScreenKnob doesn't use the microphone.
 
-### Start at login (optional)
+### Start at login
 
-System Settings → General → **Login Items** → **+** → choose ScreenKnob.
+The installed copy adds itself to **Login Items** the first time it runs, so it starts when you log in.
+Switch it off or on in the ScreenKnob window (**Options → Open at login**) or in
+System Settings → General → Login Items.
 
 ## Using it
 

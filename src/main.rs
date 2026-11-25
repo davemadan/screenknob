@@ -6,6 +6,7 @@ mod devices;
 mod diag;
 mod engine;
 mod keys;
+mod login;
 mod perm;
 mod settings;
 mod tap;
@@ -103,6 +104,10 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
     let passive = shot.is_some();
+    if args.iter().any(|a| a == "--login-status") {
+        println!("installed {}: open at login {:?}", login::installed(), login::status());
+        std::process::exit(0);
+    }
     if !passive {
         // Ask macOS for permissions as this app, not as whoever started it.
         if let Some(code) = perm::run_as_own_app() {

@@ -169,7 +169,9 @@ const APP_ICON: &[u8] = include_bytes!("../icon/AppIcon.icns");
 fn app_bundle(exe: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     use std::io::{Error, ErrorKind};
     let dir = exe.parent().ok_or_else(|| Error::new(ErrorKind::NotFound, "no folder"))?;
-    let bundle = dir.join("ScreenKnob.app");
+    // A ".noindex" folder keeps this working copy out of Spotlight and the Apps
+    // list, so only the installed ScreenKnob shows there.
+    let bundle = dir.join("ScreenKnob.noindex").join("ScreenKnob.app");
     let macos = bundle.join("Contents/MacOS");
     let inner = macos.join("screenknob");
     std::fs::create_dir_all(&macos)?;
@@ -206,12 +208,6 @@ fn app_bundle(exe: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
         if !signed.status.success() {
             return Err(Error::other(String::from_utf8_lossy(&signed.stderr).to_string()));
         }
-        let _ = std::process::Command::new(
-            "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
-        )
-        .arg("-f")
-        .arg(&bundle)
-        .output();
         std::fs::write(&stamp, id)?;
         crate::diag::log(format!("app bundle updated: {}", bundle.display()));
     }

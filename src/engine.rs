@@ -39,6 +39,7 @@ pub enum Command {
     SetSoftware(bool),
     SetKeys(bool),
     SetNative(bool),
+    SetLogin(bool),
     /// Look again (e.g. after a permission answer).
     Recheck,
 }
@@ -81,6 +82,7 @@ pub struct Snapshot {
     pub native_available: bool,
     pub native_active: bool,
     pub native_needs_capture: bool,
+    pub login: crate::login::Login,
     pub level: f32,
     pub log: Vec<(Instant, String)>,
 }
@@ -244,6 +246,14 @@ impl Engine {
         ca::add_listener(sys, Addr::new(ca::PROP_DEVICES, ca::SCOPE_GLOBAL, ca::ELEMENT_MAIN), hal_listener);
         ca::add_listener(sys, Addr::new(ca::PROP_DEFAULT_OUTPUT, ca::SCOPE_GLOBAL, ca::ELEMENT_MAIN), hal_listener);
         self.refresh();
+        // Installed copies open at login unless you switch it off.
+        if !self.passive && !self.settings.login_set_up && crate::login::installed() {
+            self.settings.login_set_up = true;
+            if crate::login::set(true).is_ok() {
+                self.note("ScreenKnob will open at login");
+            }
+            self.save_soon();
+        }
         if self.settings.preferred_uid.is_none() {
             self.settings.preferred_uid = self.target().map(|d| d.uid.clone());
             self.save_soon();
@@ -443,6 +453,13 @@ impl Engine {
                 self.next_build = Instant::now();
                 self.save_soon();
                 self.mark_dirty();
+            }
+            Command::SetLogin(b) => {
+                match crate::login::set(b) {
+                    Ok(()) => self.note(if b { "ScreenKnob will open at login" } else { "ScreenKnob won't open at login" }),
+                    Err(e) => self.note(format!("Couldn't change opening at login: {e}")),
+                }
+                self.publish();
             }
             Command::SetKeys(b) => {
                 self.settings.volume_keys = b;
@@ -1014,6 +1031,7 @@ impl Engine {
             s.native = self.settings.native_popup;
             s.native_available = self.devices.iter().any(devices::is_proxy);
             s.native_active = native_active;
+            s.login = if self.passive { crate::login::Login::Unavailable } else { crate::login::status() };
             s.native_needs_capture = !self.capture_ok && !self.passive && self.settings.native_popup;
             s.log = self.log.iter().cloned().collect();
         }

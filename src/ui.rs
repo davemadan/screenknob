@@ -319,6 +319,41 @@ impl Ui {
             if option_row(ui, pal, "Return to chosen output", "When a screen sleeps, wakes or changes input", &mut ar) {
                 self.send(Command::SetAutoReturn(ar));
             }
+            separator(ui, pal);
+            use crate::login::Login;
+            match snap.login {
+                Login::Unavailable => {
+                    row(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            ui.label(RichText::new("Open at login").color(pal.dim));
+                            ui.label(
+                                RichText::new("Available once ScreenKnob is installed in Applications")
+                                    .size(11.0)
+                                    .color(pal.dim),
+                            );
+                        });
+                    });
+                }
+                state => {
+                    let mut on = state != Login::Off;
+                    let note = if state == Login::NeedsApproval {
+                        "Switched off in System Settings → Login Items"
+                    } else {
+                        "Start ScreenKnob when you log in"
+                    };
+                    if option_row(ui, pal, "Open at login", note, &mut on) {
+                        self.send(Command::SetLogin(on));
+                    }
+                    if state == Login::NeedsApproval {
+                        row(ui, |ui| {
+                            if ui.button("Open Login Items…").clicked() {
+                                crate::login::open_settings();
+                            }
+                        });
+                    }
+                }
+            }
         });
         footnote(ui, "Closing this window keeps ScreenKnob running in the menu bar.", pal.dim);
     }
