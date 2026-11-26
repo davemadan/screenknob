@@ -36,6 +36,8 @@ pub struct Shared {
     /// Diagnostics for the self-test: loudest raw sample captured, channel layout seen.
     pub in_peak: AtomicU32,
     pub layout: AtomicU64,
+    /// Times the reader ran out of the driver's sound (each one is a click).
+    pub underruns: AtomicU64,
 }
 
 impl Shared {
@@ -181,6 +183,13 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// The same, from the test copy of the driver (never the real one's sound).
+    pub fn start_ring_test(dev: &Device, gain: f32) -> Result<Pipeline, String> {
+        let mut p = Pipeline::empty(dev, gain);
+        p.ring = Some(crate::ring::RingPlayer::start_named(dev, p.shared.clone(), crate::ring::TEST_SHM_NAME)?);
+        Ok(p)
+    }
+
     pub fn uses_driver(&self) -> bool {
         self.ring.is_some()
     }
@@ -194,6 +203,7 @@ impl Pipeline {
             level: AtomicU32::new(0),
             in_peak: AtomicU32::new(0),
             layout: AtomicU64::new(0),
+            underruns: AtomicU64::new(0),
         });
         Pipeline {
             device_uid: dev.uid.clone(),

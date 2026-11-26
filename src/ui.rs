@@ -297,7 +297,15 @@ impl Ui {
             }
             if snap.native {
                 row(ui, |ui| {
-                    if snap.driver_installed {
+                    if snap.driver_installed && snap.driver_outdated {
+                        ui.label(RichText::new("A newer ScreenKnob driver is ready (fixes crackles)").size(11.5).color(pal.warn));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let label = if snap.driver_busy { "Updating…" } else { "Update Driver…" };
+                            if ui.add_enabled(!snap.driver_busy, egui::Button::new(label)).clicked() {
+                                self.send(Command::Driver(true));
+                            }
+                        });
+                    } else if snap.driver_installed {
                         ui.label(RichText::new("ScreenKnob driver installed: nothing is recorded").size(11.5).color(pal.dim));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui.add_enabled(!snap.driver_busy, egui::Button::new("Remove…")).clicked() {

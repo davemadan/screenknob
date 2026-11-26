@@ -96,6 +96,7 @@ pub struct Snapshot {
     pub driver_installed: bool,
     pub driver_available: bool,
     pub driver_busy: bool,
+    pub driver_outdated: bool,
     /// The volume popup to show: when, level, muted, output name.
     pub hud: Option<(Instant, f32, bool, String)>,
     pub level: f32,
@@ -531,7 +532,7 @@ impl Engine {
             Command::DriverDone(install, r) => {
                 self.driver_busy = false;
                 match r {
-                    Ok(()) if install => self.note("ScreenKnob driver installed; the Mac's sound restarted"),
+                    Ok(()) if install => self.note("ScreenKnob driver installed or updated; the Mac's sound restarted"),
                     Ok(()) => self.note("ScreenKnob driver removed"),
                     Err(e) => self.note(format!("Driver not changed: {e}")),
                 }
@@ -1197,6 +1198,7 @@ impl Engine {
             s.driver_installed = self.devices.iter().any(devices::is_driver) || crate::driver::installed();
             s.driver_available = crate::driver::source().is_some();
             s.driver_busy = self.driver_busy;
+            s.driver_outdated = crate::driver::outdated();
             s.hud = self.hud.clone();
             s.login = if self.passive { crate::login::Login::Unavailable } else { crate::login::status() };
 

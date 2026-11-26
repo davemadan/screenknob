@@ -58,6 +58,7 @@ static Float32 gVolume = 0.5f;           // scalar 0..1
 static Boolean gMuted = false;
 
 static SKRing *gRing = NULL;             // shared with the app
+static UInt64 gWrittenEnd = 0;           // end of what this run has written
 
 // ---------------------------------------------------------------------------
 // Volume curve: amplitude = scalar², shown in dB, clamped to the range.
@@ -613,6 +614,12 @@ static OSStatus SK_StartIO(AudioServerPlugInDriverRef d, AudioObjectID id, UInt3
         gTickCount = 0;
         OpenRing();
         if (gRing) {
+            // A new run: no leftovers from the last one, and the clock the app reads by.
+            memset(gRing->data, 0, (size_t)SK_RING_FRAMES * kChannels * sizeof(float));
+            gWrittenEnd = 0;
+            atomic_store(&gRing->write_end, 0);
+            gRing->ticks_per_frame = gTicksPerFrame;
+            atomic_store(&gRing->anchor_host, gAnchorHost);
             atomic_store(&gRing->running, 1u);
             atomic_fetch_add(&gRing->generation, 1u);
         }
@@ -669,12 +676,23 @@ static OSStatus SK_DoIOOperation(AudioServerPlugInDriverRef d, AudioObjectID id,
     // Copy the mixed output into the ring at its sample time; the app plays it.
     UInt64 start = (UInt64)cycle->mOutputTime.mSampleTime;
     const Float32 *src = (const Float32 *)main;
+    // If the sound server skipped a stretch, that stretch is silence, not old sound.
+    if (gWrittenEnd && start > gWrittenEnd) {
+        UInt64 gap = start - gWrittenEnd;
+        if (gap > SK_RING_FRAMES) gap = SK_RING_FRAMES;
+        for (UInt64 f = 0; f < gap; f++) {
+            UInt64 slot = (gWrittenEnd + f) % SK_RING_FRAMES;
+            gRing->data[slot * kChannels + 0] = 0.0f;
+            gRing->data[slot * kChannels + 1] = 0.0f;
+        }
+    }
     for (UInt32 f = 0; f < frames; f++) {
         UInt64 slot = (start + f) % SK_RING_FRAMES;
         gRing->data[slot * kChannels + 0] = src[f * kChannels + 0];
         gRing->data[slot * kChannels + 1] = src[f * kChannels + 1];
     }
-    atomic_store_explicit(&gRing->write_end, start + frames, memory_order_release);
+    if (start + frames > gWrittenEnd) gWrittenEnd = start + frames;
+    atomic_store_explicit(&gRing->write_end, gWrittenEnd, memory_order_release);
     return 0;
 }
 

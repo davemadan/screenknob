@@ -6,7 +6,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef SK_SHM_NAME                             // tests build with their own name
 #define SK_SHM_NAME      "/screenknob.audio.1"  // POSIX names are at most 31 characters
+#endif
 #define SK_RING_MAGIC    0x534B4155u            // "SKAU"
 #define SK_RING_VERSION  1u
 #define SK_RING_FRAMES   65536u                 // about 1.4 s at 48 kHz
@@ -22,7 +24,8 @@ typedef struct {
     _Atomic uint32_t generation;    // goes up each time playing starts
     _Atomic uint32_t volume_bits;   // the device's volume (f32 bits, 0..1)
     _Atomic uint32_t muted;         // the device's mute
-    uint8_t reserved[16];           // header is 64 bytes
+    _Atomic uint64_t anchor_host;   // host time of sample 0 (driver 2+; 0 if unknown)
+    double ticks_per_frame;         // host ticks per frame (driver 2+)
     float data[];                   // capacity * channels samples
 } SKRing;
 

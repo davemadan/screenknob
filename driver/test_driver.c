@@ -1,8 +1,9 @@
 // Loads the ScreenKnob Audio driver in an ordinary process (no install needed),
 // asks it what the sound server would, plays a tone into it and checks that the
 // tone arrives in the shared-memory ring.
-//   clang driver/test_driver.c -o target/test_driver -framework CoreAudio -framework CoreFoundation
-//   target/test_driver target/driver.noindex/ScreenKnobAudio.driver/Contents/MacOS/ScreenKnobAudio
+// Build both with scripts/make-driver.sh (they share sound under a test name, so
+// they never touch the real driver), then:
+//   target/test_driver target/driver-test.noindex/ScreenKnobAudio
 
 #include <CoreAudio/AudioServerPlugIn.h>
 #include <dlfcn.h>
@@ -29,7 +30,11 @@ static OSStatus HostDelete(AudioServerPlugInHostRef h, CFStringRef k) { (void)h;
 static OSStatus HostConfig(AudioServerPlugInHostRef h, AudioObjectID d, UInt64 a, void *i) { (void)h; (void)d; (void)a; (void)i; return 0; }
 
 int main(int argc, char **argv) {
-    const char *path = argc > 1 ? argv[1] : "target/driver.noindex/ScreenKnobAudio.driver/Contents/MacOS/ScreenKnobAudio";
+    const char *path = argc > 1 ? argv[1] : "target/driver-test.noindex/ScreenKnobAudio";
+    if (strcmp(SK_SHM_NAME, "/screenknob.audio.1") == 0) {
+        printf("refusing to run against the real driver's shared sound; build with scripts/make-driver.sh\n");
+        return 2;
+    }
     void *lib = dlopen(path, RTLD_NOW);
     CHECK(lib != NULL, "load %s", path);
     if (!lib) return 1;
@@ -139,24 +144,32 @@ int main(int argc, char **argv) {
     }
     // Optional: keep playing a tone in real time, for testing the app's reader.
     if (argc > 3 && strcmp(argv[2], "--play-seconds") == 0) {
+        // Like the sound server: on the driver's own clock, write blocks of N
+        // frames one block ahead of "now" (N = the app's buffer size).
         double secs = atof(argv[3]);
+        int N = argc > 4 ? atoi(argv[4]) : 512;
         mach_timebase_info_data_t tb; mach_timebase_info(&tb);
+        double tpf = 1e9 * tb.denom / tb.numer / 48000.0;
+        Float64 zs = 0; UInt64 zh = 0, zseed = 0;
+        (*drv)->GetZeroTimeStamp(drv, dev, 1, &zs, &zh, &zseed);
         uint64_t t0 = mach_absolute_time();
-        double written = 0;
-        while (1) {
-            double elapsed = (double)(mach_absolute_time() - t0) * tb.numer / tb.denom / 1e9;
-            if (elapsed > secs) break;
-            while (written + 480 <= elapsed * 48000.0) {
-                float buf[480 * 2];
-                for (int i = 0; i < 480; i++) buf[i * 2] = buf[i * 2 + 1] = 0.5f * sinf((float)((written + i) * 2 * M_PI * 440.0 / 48000.0));
+        double next = floor(zs + (double)(t0 - zh) / tpf);
+        float *buf = calloc((size_t)N * 2, sizeof(float));
+        long blocks = 0;
+        while ((double)(mach_absolute_time() - t0) * tb.numer / tb.denom / 1e9 < secs) {
+            (*drv)->GetZeroTimeStamp(drv, dev, 1, &zs, &zh, &zseed);
+            double now = zs + (double)(mach_absolute_time() - zh) / tpf;
+            while (next <= now + N) {
+                for (int i = 0; i < N; i++) buf[i * 2] = buf[i * 2 + 1] = 0.5f * sinf((float)fmod((next + i) * 2 * M_PI * 440.0 / 48000.0, 2 * M_PI));
                 AudioServerPlugInIOCycleInfo c = {0};
-                c.mOutputTime.mSampleTime = written;
-                (*drv)->DoIOOperation(drv, dev, 3, 1, kAudioServerPlugInIOOperationWriteMix, 480, &c, buf, NULL);
-                written += 480;
+                c.mOutputTime.mSampleTime = next;
+                (*drv)->DoIOOperation(drv, dev, 3, 1, kAudioServerPlugInIOOperationWriteMix, (UInt32)N, &c, buf, NULL);
+                next += N; blocks++;
             }
-            usleep(5000);
+            usleep(2000);
         }
-        printf("played %.0f frames in real time\n", written);
+        free(buf);
+        printf("played %ld blocks of %d frames in real time\n", blocks, N);
     }
     (*drv)->StopIO(drv, dev, 1);
     printf("%s\n", failures ? "SOME CHECKS FAILED" : "all checks passed");
