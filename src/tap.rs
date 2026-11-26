@@ -42,6 +42,18 @@ impl Shared {
     pub fn set_gain(&self, g: f32) {
         self.target_gain.store(g.clamp(0.0, 4.0).to_bits(), Ordering::Relaxed);
     }
+
+    pub fn target_gain(&self) -> f32 {
+        f32::from_bits(self.target_gain.load(Ordering::Relaxed))
+    }
+
+    pub fn applied_bits(&self) -> u32 {
+        self.applied_gain.load(Ordering::Relaxed)
+    }
+
+    pub fn store_applied(&self, g: f32) {
+        self.applied_gain.store(g.to_bits(), Ordering::Relaxed);
+    }
 }
 
 pub struct Pipeline {
@@ -52,6 +64,8 @@ pub struct Pipeline {
     pub shared: Arc<Shared>,
     /// The virtual speaker standing in as the Mac's output (for the native popup), if any.
     pub proxy_uid: Option<String>,
+    /// Set when the sound comes from the ScreenKnob driver instead of a tap.
+    ring: Option<crate::ring::RingPlayer>,
     tap_id: AudioObjectID,
     agg_id: AudioObjectID,
     proc_id: IOProcID,
@@ -158,6 +172,19 @@ impl Pipeline {
         Ok(p)
     }
 
+    /// Plays what apps send to the ScreenKnob driver (`proxy`) on `dev`, read
+    /// from shared memory: no capture, so no recording indicator.
+    pub fn start_ring(dev: &Device, proxy: &Device, gain: f32) -> Result<Pipeline, String> {
+        let mut p = Pipeline::empty(dev, gain);
+        p.proxy_uid = Some(proxy.uid.clone());
+        p.ring = Some(crate::ring::RingPlayer::start(dev, p.shared.clone())?);
+        Ok(p)
+    }
+
+    pub fn uses_driver(&self) -> bool {
+        self.ring.is_some()
+    }
+
     fn empty(dev: &Device, gain: f32) -> Pipeline {
         let shared = Arc::new(Shared {
             target_gain: AtomicU32::new(gain.to_bits()),
@@ -175,6 +202,7 @@ impl Pipeline {
             started: Instant::now(),
             shared,
             proxy_uid: None,
+            ring: None,
             tap_id: 0,
             agg_id: 0,
             proc_id: std::ptr::null_mut(),
@@ -200,6 +228,7 @@ impl Pipeline {
     }
 
     fn teardown(&mut self) {
+        self.ring = None; // stops its callback first
         unsafe {
             if self.running {
                 let _ = ca::AudioDeviceStop(self.agg_id, self.proc_id);

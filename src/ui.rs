@@ -288,12 +288,32 @@ impl Ui {
             separator(ui, pal);
             let mut n = snap.native;
             let native_note = if !snap.native_available {
-                "Needs the free BlackHole 2ch driver"
+                "Needs ScreenKnob's driver (below) or BlackHole 2ch"
             } else {
-                "Native popup and click for screens, via BlackHole 2ch"
+                "Native popup, keys and click for screens"
             };
             if option_row(ui, pal, "macOS volume popup", native_note, &mut n) {
                 self.send(Command::SetNative(n));
+            }
+            if snap.native {
+                row(ui, |ui| {
+                    if snap.driver_installed {
+                        ui.label(RichText::new("ScreenKnob driver installed: nothing is recorded").size(11.5).color(pal.dim));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.add_enabled(!snap.driver_busy, egui::Button::new("Remove…")).clicked() {
+                                self.send(Command::Driver(false));
+                            }
+                        });
+                    } else if snap.driver_available {
+                        ui.label(RichText::new("No recording dot: install ScreenKnob's own sound driver").size(11.5).color(pal.dim));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let label = if snap.driver_busy { "Installing…" } else { "Install Driver…" };
+                            if ui.add_enabled(!snap.driver_busy, egui::Button::new(label)).clicked() {
+                                self.send(Command::Driver(true));
+                            }
+                        });
+                    }
+                });
             }
             if snap.native && snap.native_available && snap.native_needs_capture {
                 row(ui, |ui| {

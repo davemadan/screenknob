@@ -41,6 +41,9 @@ pub enum Command {
     SetNative(bool),
     SetLogin(bool),
     SetMonitorVolume(bool),
+    /// Install (true) or remove (false) ScreenKnob's sound driver.
+    Driver(bool),
+    DriverDone(bool, Result<(), String>),
     /// Screens found over their cable, with their speaker volume (None: no answer).
     DdcReport(Vec<(String, Option<f32>)>),
     /// A volume key: step (0 for mute), and whether Shift was held.
@@ -91,6 +94,9 @@ pub struct Snapshot {
     pub native_needs_capture: bool,
     pub login: crate::login::Login,
     pub monitor_volume: bool,
+    pub driver_installed: bool,
+    pub driver_available: bool,
+    pub driver_busy: bool,
     /// The volume popup to show: when, level, muted, output name.
     pub hud: Option<(Instant, f32, bool, String)>,
     pub level: f32,
@@ -206,6 +212,7 @@ struct Engine {
     ddc: Option<Sender<crate::ddc::Req>>,
     ddc_probed: Instant,
     hud: Option<(Instant, f32, bool, String)>,
+    driver_busy: bool,
     /// System Audio Recording allowed (needed before sound may go to the virtual speaker).
     capture_ok: bool,
     capture_checked: Instant,
@@ -271,6 +278,7 @@ impl Engine {
             ddc: None,
             ddc_probed: now,
             hud: None,
+            driver_busy: false,
             capture_checked: now,
         }
     }
@@ -342,14 +350,22 @@ impl Engine {
         if !self.settings.native_popup || !self.settings.software_volume {
             return None;
         }
-        self.devices.iter().find(|d| devices::is_proxy(d) && d.alive)
+        // ScreenKnob's own driver first (nothing recorded), else BlackHole.
+        self.devices
+            .iter()
+            .find(|d| devices::is_driver(d) && d.alive)
+            .or_else(|| self.devices.iter().find(|d| devices::is_proxy(d) && d.alive))
+    }
+
+    fn proxy_is_driver(&self) -> bool {
+        self.proxy().is_some_and(devices::is_driver)
     }
 
     /// The screen that should play through the virtual speaker: your chosen
     /// output, when it's there and has no volume control of its own.
     fn native_target(&self) -> Option<&Device> {
         self.proxy()?;
-        if !self.capture_ok && !self.passive {
+        if !self.capture_ok && !self.passive && !self.proxy_is_driver() {
             return None; // until then the screen keeps its software volume
         }
         let pref = self.settings.preferred_uid.as_deref()?;
@@ -514,6 +530,31 @@ impl Engine {
                     Err(e) => self.note(format!("Couldn't change opening at login: {e}")),
                 }
                 self.publish();
+            }
+            Command::Driver(install) => {
+                if self.driver_busy || self.passive {
+                    return;
+                }
+                self.driver_busy = true;
+                // macOS's password prompt waits for you; don't hold up the sound meanwhile.
+                std::thread::spawn(move || {
+                    let r = if install { crate::driver::install() } else { crate::driver::remove() };
+                    if let Some(tx) = TX.get() {
+                        let _ = tx.send(Command::DriverDone(install, r));
+                    }
+                });
+                self.publish();
+            }
+            Command::DriverDone(install, r) => {
+                self.driver_busy = false;
+                match r {
+                    Ok(()) if install => self.note("ScreenKnob driver installed; the Mac's sound restarted"),
+                    Ok(()) => self.note("ScreenKnob driver removed"),
+                    Err(e) => self.note(format!("Driver not changed: {e}")),
+                }
+                self.pipeline = None;
+                self.next_build = Instant::now() + RESTORE_INTERVAL;
+                self.mark_dirty();
             }
             Command::SetMonitorVolume(b) => {
                 self.settings.monitor_volume = b;
@@ -814,7 +855,7 @@ impl Engine {
         if self.passive {
             return;
         }
-        if !self.capture_ok && self.proxy().is_some() && self.native_target_ignoring_setting().is_some() {
+        if !self.capture_ok && self.proxy().is_some() && !self.proxy_is_driver() && self.native_target_ignoring_setting().is_some() {
             perm::request_audio_capture(|| {
                 if let Some(tx) = TX.get() {
                     let _ = tx.send(Command::Recheck);
@@ -826,7 +867,8 @@ impl Engine {
         }
         let Some(cur) = self.current().cloned() else { return };
         match (self.native_target().cloned(), self.proxy().cloned()) {
-            (Some(t), Some(p)) if cur.uid == t.uid => {
+            // Your screen, or the other virtual speaker, is the output: use the preferred stand-in.
+            (Some(t), Some(p)) if cur.uid == t.uid || (devices::is_proxy(&cur) && cur.uid != p.uid) => {
                 // Carry the screen's own level over, so nothing gets suddenly louder.
                 let saved = self.settings.volume_for(&t.uid);
                 devices::set_hw_volume(&p, saved.volume);
@@ -862,8 +904,9 @@ impl Engine {
         self.maybe_start_restore();
         // What should play where: (screen, virtual speaker it's fed from, if any).
         let want: Option<(Device, Option<Device>)> = if self.default_is_proxy() {
-            match (self.native_target().cloned(), self.proxy().cloned()) {
-                (Some(t), Some(p)) => Some((t, Some(p))),
+            match (self.native_target().cloned(), self.proxy().cloned(), self.current().cloned()) {
+                // Only the stand-in that is actually the output carries the sound.
+                (Some(t), Some(p), Some(c)) if c.uid == p.uid => Some((t, Some(p))),
                 _ => None,
             }
         } else {
@@ -910,8 +953,10 @@ impl Engine {
         }
         // Never start before macOS allows capturing the sound: it would mute
         // everything and hand us silence.
-        // Both routes capture the system sound with a tap; no microphone is used.
-        match perm::audio_capture() {
+        // The tap routes need System Audio Recording; ScreenKnob's own driver doesn't.
+        let needs_capture = via.as_ref().is_none_or(|p| !devices::is_driver(p));
+        let access = if needs_capture { perm::audio_capture() } else { perm::Access::Granted };
+        match access {
             perm::Access::Granted => self.perm_message = None,
             access => {
                 if access == perm::Access::NotAsked {
@@ -938,6 +983,8 @@ impl Engine {
         let started = match &via {
             // The virtual speaker is the Mac's output (so macOS shows its popup and
             // click); the sound itself is tapped and played on the screen.
+            // ScreenKnob's driver shares its sound directly: nothing is recorded.
+            Some(p) if devices::is_driver(p) => Pipeline::start_ring(&d, p, proxy_gain(p)),
             Some(p) => Pipeline::start(&d, proxy_gain(p)).map(|mut pipe| {
                 pipe.proxy_uid = Some(p.uid.clone());
                 pipe
@@ -1144,6 +1191,9 @@ impl Engine {
                 }
                 Mode::Software => match (&self.pipeline, &self.pipe_error) {
                     (_, Some(e)) => (format!("{e} Trying again…"), false),
+                    (Some(p), None) if native_active && p.uses_driver() => {
+                        (format!("{} uses the macOS volume controls (ScreenKnob driver, nothing recorded)", d.name), true)
+                    }
                     (Some(_), None) if native_active => {
                         (format!("{} uses the macOS volume controls (through BlackHole 2ch)", d.name), true)
                     }
@@ -1172,6 +1222,9 @@ impl Engine {
             s.native_available = self.devices.iter().any(devices::is_proxy);
             s.native_active = native_active;
             s.monitor_volume = self.settings.monitor_volume;
+            s.driver_installed = self.devices.iter().any(devices::is_driver) || crate::driver::installed();
+            s.driver_available = crate::driver::source().is_some();
+            s.driver_busy = self.driver_busy;
             s.hud = self.hud.clone();
             s.login = if self.passive { crate::login::Login::Unavailable } else { crate::login::status() };
             s.native_needs_capture = !self.capture_ok && !self.passive && self.settings.native_popup;

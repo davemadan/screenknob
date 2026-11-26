@@ -23,8 +23,8 @@ change, moves sound to another speaker while the screen is away, and switches ba
 ## Requirements
 
 - macOS 14.2 (Sonoma) or newer. Apple silicon or Intel.
-- Optional but recommended: **[BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole)**
-  (free), for the native volume popup and click.
+- Optional: ScreenKnob's own sound driver (included; installed from the app) for the native popup with no
+  recording indicator. [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) also works, with the indicator.
 - To build it: the Rust toolchain (free, see step 1).
 
 ## Install
@@ -103,22 +103,21 @@ System Settings → General → Login Items.
 
 ## About the recording indicator
 
-When ScreenKnob changes a screen's volume in software, it has to pass the Mac's sound through itself,
-and macOS always shows its recording indicator (next to the clock) while an app does that. ScreenKnob
-records nothing, but macOS can't tell the difference, and apps can't hide the indicator.
+macOS shows a recording indicator (next to the clock) whenever an app captures the Mac's sound. To control a
+screen's volume, ScreenKnob needs the sound, and there are three ways it gets it:
 
-To avoid it, ScreenKnob can set the **monitor's own speaker volume over the display cable** (DDC/CI)
-instead: no sound passes through ScreenKnob, so no indicator. This is on by default (**Options →
-Monitor's own volume**) and is used for any screen that answers. It needs:
+1. **ScreenKnob's own sound driver (recommended, no indicator).** Like eqMac, ScreenKnob can install a small
+   virtual speaker called **ScreenKnob**. macOS sends the sound there, sees a real volume control (so its own
+   popup, keys and click work), and the driver hands the sound to the app through shared memory. Nothing is
+   recorded, so there's no indicator. Install it from **Options → macOS volume popup → Install Driver…**
+   (asks for your Mac password once; the Mac's sound restarts for a second). Remove it the same way.
+2. **The monitor's own volume over the cable (no indicator).** For screens that allow it (DDC/CI), ScreenKnob sets
+   the monitor's speaker volume directly (**Options → Monitor's own volume**). This needs a USB-C / Thunderbolt /
+   DisplayPort connection on some Macs: the built-in HDMI port of M1 Pro/Max/Ultra Macs doesn't carry it.
+3. **Capturing the sound (indicator shown).** Without the driver, ScreenKnob uses a system-audio tap (optionally with
+   BlackHole 2ch for the native popup). This needs the System Audio Recording permission, and macOS shows the indicator.
 
-- a monitor that allows volume control over DDC/CI (most do; it may need "DDC/CI" switched on in the
-  monitor's own menu), and
-- a connection that carries DDC: USB-C / Thunderbolt / DisplayPort ports work. The **built-in HDMI port
-  of some Apple silicon Macs** (for example M1 Pro/Max/Ultra models) doesn't carry it; connect the screen
-  with a USB-C-to-HDMI or USB-C-to-DisplayPort cable instead.
-
-In this mode the volume keys show ScreenKnob's own volume popup (top right) and play the macOS click.
-Screens that don't answer keep working the other way, with the indicator.
+ScreenKnob picks the first that works for your screen.
 
 ## Troubleshooting
 
@@ -131,7 +130,9 @@ Screens that don't answer keep working the other way, with the indicator.
 
 ## Uninstall
 
-Quit ScreenKnob from its menu bar icon, then delete `/Applications/ScreenKnob.app`. To remove its
+If you installed the driver, remove it first (**Options → macOS volume popup → Remove…**), or in Terminal:
+`sudo rm -rf /Library/Audio/Plug-Ins/HAL/ScreenKnobAudio.driver && sudo killall coreaudiod`.
+Then quit ScreenKnob from its menu bar icon and delete `/Applications/ScreenKnob.app`. To remove its
 settings and log too, delete `~/Library/Application Support/ScreenKnob` and `~/Library/Logs/ScreenKnob.log`,
 and remove it from the Privacy & Security lists.
 

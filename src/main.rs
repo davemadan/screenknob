@@ -5,10 +5,12 @@ mod ca;
 mod ddc;
 mod devices;
 mod diag;
+mod driver;
 mod engine;
 mod keys;
 mod login;
 mod perm;
+mod ring;
 mod settings;
 mod tap;
 mod tray;
@@ -119,6 +121,34 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
     let passive = shot.is_some();
+    if let Some(i) = args.iter().position(|a| a == "--ring-selftest") {
+        // Plays the driver's shared sound on the named output for 3 s and reports.
+        let name = args.get(i + 1).cloned().unwrap_or_default();
+        let Some(d) = devices::list_outputs().into_iter().find(|d| d.name == name) else {
+            println!("no output named {name}");
+            std::process::exit(1);
+        };
+        match tap::Pipeline::start_ring(&d, &d, 1.0) {
+            Ok(p) => {
+                let mut lags = Vec::new();
+                let mut peak = 0.0f32;
+                for _ in 0..30 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    lags.push(p.shared.layout.load(std::sync::atomic::Ordering::Relaxed));
+                    peak = peak.max(f32::from_bits(p.shared.level.load(std::sync::atomic::Ordering::Relaxed)));
+                }
+                println!(
+                    "callbacks {}, loudest {:.3}, distance behind the driver (frames): first {:?} last {:?}",
+                    p.shared.callbacks.load(std::sync::atomic::Ordering::Relaxed),
+                    peak,
+                    &lags[..3],
+                    &lags[lags.len() - 3..]
+                );
+            }
+            Err(e) => println!("failed: {e}"),
+        }
+        std::process::exit(0);
+    }
     if args.iter().any(|a| a == "--ddc-status") {
         for m in ddc::monitors() {
             println!("{}: speaker volume {:?}", m.name, m.volume());

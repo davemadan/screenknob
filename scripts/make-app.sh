@@ -15,6 +15,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/Info.plist"
 cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp target/release/screenknob "$APP/Contents/MacOS/screenknob"
+# The sound driver (built by cargo into target/driver.noindex) travels inside the app.
+cp -R target/driver.noindex/ScreenKnobAudio.driver "$APP/Contents/Resources/"
 
 # Local (ad-hoc) signature with a fixed identity, so the permissions you grant
 # survive updates. No Apple developer account is needed.
