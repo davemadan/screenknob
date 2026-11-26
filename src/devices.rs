@@ -143,3 +143,19 @@ pub fn is_blackhole(d: &Device) -> bool {
 pub fn is_driver(d: &Device) -> bool {
     d.uid == DRIVER_UID
 }
+
+/// Gets macOS to set up a stuck output again (it reports "not running" and
+/// takes no sound, typically after its screen woke): switch its sample rate
+/// away and back. Runs on its own thread; takes about a second.
+pub fn kick(dev: &Device) {
+    let id = dev.id;
+    let rate = if dev.sample_rate > 0.0 { dev.sample_rate } else { 48000.0 };
+    std::thread::spawn(move || {
+        let addr = Addr::new(ca::PROP_NOMINAL_RATE, ca::SCOPE_GLOBAL, ca::ELEMENT_MAIN);
+        let others: [f64; 3] = if rate == 48000.0 { [44100.0, 96000.0, 32000.0] } else { [48000.0, 44100.0, 96000.0] };
+        if others.iter().any(|&r| ca::set(id, addr, r) == 0) {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        let _ = ca::set(id, addr, rate);
+    });
+}

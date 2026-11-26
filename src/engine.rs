@@ -210,6 +210,8 @@ struct Engine {
     displays_checked: Instant,
     /// A second reconnect a few seconds after a screen wakes (some take a while).
     rewake_at: Option<Instant>,
+    /// The last output nudged back to life, and when (at most once per 15 s each).
+    last_kick: Option<(String, Instant)>,
     /// A default-output change this app made itself (not to be read as your choice).
     expect_default: Option<(u32, Instant)>,
     /// Screens that answered over their cable: name → speaker volume (0..1).
@@ -277,6 +279,7 @@ impl Engine {
             asleep: Vec::new(),
             displays_checked: now,
             rewake_at: None,
+            last_kick: None,
             expect_default: None,
             ddc_vol: std::collections::HashMap::new(),
             ddc: None,
@@ -994,8 +997,28 @@ impl Engine {
                 let wait = (RESTORE_INTERVAL * self.build_attempts).min(Duration::from_secs(5));
                 self.next_build = Instant::now() + wait;
                 self.pipe_error = Some(e);
+                self.maybe_kick(&d.uid);
             }
         }
+    }
+
+    /// A screen that refuses sound gets set up again by macOS, then is retried.
+    fn maybe_kick(&mut self, uid: &str) {
+        if self.passive {
+            return;
+        }
+        if self.last_kick.as_ref().is_some_and(|(u, t)| u == uid && t.elapsed() < Duration::from_secs(15)) {
+            return;
+        }
+        let Some(d) = self.device_by_uid(uid).cloned() else { return };
+        if d.hw_volume || devices::is_proxy(&d) {
+            return;
+        }
+        self.last_kick = Some((uid.to_string(), Instant::now()));
+        self.note(format!("{} wasn't taking sound; setting it up again", d.name));
+        devices::kick(&d);
+        // Retry once it's had time to come back.
+        self.next_build = Instant::now() + Duration::from_millis(1800);
     }
 
     /// Stops the sound path and builds it again at `at` (after re-reading the outputs).
@@ -1080,6 +1103,9 @@ impl Engine {
                     let wait = (RESTORE_INTERVAL * self.build_attempts).min(Duration::from_secs(5));
                     self.next_build = now + wait;
                     if never_started {
+                        if let Some(uid) = self.devices.iter().find(|d| d.name == name).map(|d| d.uid.clone()) {
+                            self.maybe_kick(&uid);
+                        }
                         // macOS reports such a screen as "not running": asleep, or showing another input.
                         if self.build_attempts == 1 {
                             self.note(format!("{name} isn't taking sound right now"));
