@@ -205,6 +205,11 @@ struct Engine {
     log: VecDeque<(Instant, String)>,
     last_publish: Instant,
     show_checked: Instant,
+    /// Screens asleep at the last look, and when that was.
+    asleep: Vec<u32>,
+    displays_checked: Instant,
+    /// A second reconnect a few seconds after a screen wakes (some take a while).
+    rewake_at: Option<Instant>,
     /// A default-output change this app made itself (not to be read as your choice).
     expect_default: Option<(u32, Instant)>,
     /// Screens that answered over their cable: name → speaker volume (0..1).
@@ -269,6 +274,9 @@ impl Engine {
             log: VecDeque::new(),
             last_publish: now,
             show_checked: now,
+            asleep: Vec::new(),
+            displays_checked: now,
+            rewake_at: None,
             expect_default: None,
             ddc_vol: std::collections::HashMap::new(),
             ddc: None,
@@ -990,6 +998,20 @@ impl Engine {
         }
     }
 
+    /// Stops the sound path and builds it again at `at` (after re-reading the outputs).
+    fn reconnect(&mut self, at: Instant) {
+        if self.pipeline.is_none() && self.pipe_error.is_none() {
+            self.mark_dirty();
+            return;
+        }
+        self.pipeline = None;
+        self.pipe_error = Some("Reconnecting…".into());
+        self.build_attempts = 0;
+        self.next_build = at;
+        self.restore = None;
+        self.mark_dirty();
+    }
+
     fn tick(&mut self) {
         let now = Instant::now();
         // Waking from sleep shows up as wall-clock time jumping ahead of the monotonic clock.
@@ -997,13 +1019,29 @@ impl Engine {
         let mono_gap = now.duration_since(self.mono);
         if wall_gap > mono_gap + Duration::from_secs(3) {
             self.note("Mac woke up; checking outputs");
-            self.pipeline = None;
-            self.next_build = now + RESTORE_INTERVAL;
-            self.restore = None;
-            self.mark_dirty();
+            self.reconnect(now + RESTORE_INTERVAL);
+            self.rewake_at = Some(now + Duration::from_secs(4));
         }
         self.wall = SystemTime::now();
         self.mono = now;
+
+        // A screen waking keeps its sound device, but the old stream isn't heard
+        // any more: start the sound over, then once more a little later.
+        if !self.passive && now.duration_since(self.displays_checked) >= Duration::from_secs(1) {
+            self.displays_checked = now;
+            let asleep = crate::displays::asleep();
+            let woke = self.asleep.iter().any(|d| !asleep.contains(d));
+            if woke {
+                self.note("A screen woke up; reconnecting the sound");
+                self.reconnect(now + Duration::from_millis(800));
+                self.rewake_at = Some(now + Duration::from_secs(4));
+            }
+            self.asleep = asleep;
+        }
+        if self.rewake_at.is_some_and(|t| now >= t) {
+            self.rewake_at = None;
+            self.reconnect(now);
+        }
 
         if self.dirty_at.is_some_and(|t| now >= t) {
             self.dirty_at = None;

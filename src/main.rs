@@ -4,6 +4,7 @@
 mod ca;
 mod ddc;
 mod devices;
+mod displays;
 mod diag;
 mod driver;
 mod engine;
@@ -149,6 +150,10 @@ fn main() -> eframe::Result<()> {
             }
             Err(e) => println!("failed: {e}"),
         }
+        std::process::exit(0);
+    }
+    if args.iter().any(|a| a == "--displays-status") {
+        println!("asleep displays: {:?}", displays::asleep());
         std::process::exit(0);
     }
     if args.iter().any(|a| a == "--ddc-status") {
