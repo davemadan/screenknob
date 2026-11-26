@@ -14,8 +14,8 @@ change, moves sound to another speaker while the screen is away, and switches ba
 
 - **Volume for screens without their own control** (HDMI, DisplayPort, Thunderbolt displays).
   Speakers that do have a volume control (built-in, USB, Bluetooth) keep using it.
-- **macOS volume popup and click** for those screens, through the free BlackHole 2ch virtual speaker
-  (see below). Without BlackHole, the volume keys still work; you just won't see the popup.
+- **macOS volume popup and click** for those screens, through ScreenKnob's own sound driver
+  (installed from the app). Without it, the volume keys still work with ScreenKnob's own popup.
 - **Remembers your chosen output** and goes back to it after the screen sleeps, wakes or changes input.
 - **Menu bar icon** with Louder, Quieter, Mute and the current output; closing the window keeps it running.
 - Follows light and dark mode and your accent color.
@@ -24,7 +24,7 @@ change, moves sound to another speaker while the screen is away, and switches ba
 
 - macOS 14.2 (Sonoma) or newer. Apple silicon or Intel.
 - Optional: ScreenKnob's own sound driver (included; installed from the app) for the native popup with no
-  recording indicator. [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) also works, with the indicator.
+  recording indicator. No other drivers are needed.
 - To build it: the Rust toolchain (free, see step 1).
 
 ## Install
@@ -37,7 +37,7 @@ change, moves sound to another speaker while the screen is away, and switches ba
    not by Apple). Open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**
    next to ScreenKnob, then confirm.
    (Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/ScreenKnob.app`.)
-4. Optional: install BlackHole 2ch for the native popup (see step 2 below), then read *First launch*.
+4. Read *First launch* below.
 
 ### Or build it yourself
 
@@ -48,17 +48,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profil
 source "$HOME/.cargo/env"
 ```
 
-#### 2. Optional: install BlackHole 2ch (for the native popup)
-
-With [Homebrew](https://brew.sh):
-
-```sh
-brew install blackhole-2ch
-```
-
-or download the installer from the BlackHole page. You may need to restart your Mac afterwards.
-
-#### 3. Build and install ScreenKnob
+#### 2. Build and install ScreenKnob
 
 ```sh
 git clone https://github.com/davemadan/screenknob.git
@@ -74,12 +64,15 @@ downloadable disk image and a zip in `release/`.
 
 Open **ScreenKnob** from Applications (a copy you built yourself opens straight away).
 
-ScreenKnob asks for two permissions. Both are needed for screens without a volume control:
+For screens without a volume control, install ScreenKnob's sound driver: **Options → macOS volume popup →
+Install Driver…** (your Mac password once). With it, ScreenKnob needs no permissions at all.
+
+Without the driver, ScreenKnob asks for:
 
 | Permission | Where | Why |
 |---|---|---|
 | **System Audio Recording** | Privacy & Security → Screen & System Audio Recording | ScreenKnob passes your Mac's sound through itself to set the screen's level. Nothing is recorded or saved. |
-| **Accessibility** | Privacy & Security → Accessibility | Only used without BlackHole, so the keyboard volume keys can control the screen. |
+| **Accessibility** | Privacy & Security → Accessibility | So the keyboard volume keys can control the screen. |
 
 ScreenKnob doesn't use the microphone.
 
@@ -95,8 +88,8 @@ System Settings → General → Login Items.
 - In the window, pick the output under **Output device**, set the level with the slider, and switch options:
   - **Software volume** — volume for screens without their own control.
   - **Monitor's own volume** — set the screen's speakers over its cable when it allows it (no recording indicator).
-  - **macOS volume popup** — routes screens through BlackHole 2ch so macOS shows its own popup and click.
-    While this is on, your Mac's sound output shows as "BlackHole 2ch"; that's expected.
+  - **macOS volume popup** — routes screens through ScreenKnob's sound driver so macOS shows its own popup and
+    click. While this is on, your Mac's sound output shows as "ScreenKnob"; that's expected.
   - **Volume keys** — the keyboard keys for those screens (when the popup option is off).
   - **Return to chosen output** — switch back to your screen after it sleeps, wakes or changes input.
 - **Quit** from the menu bar icon. Quitting hands the sound back to your screen directly.
@@ -114,14 +107,18 @@ screen's volume, ScreenKnob needs the sound, and there are three ways it gets it
 2. **The monitor's own volume over the cable (no indicator).** For screens that allow it (DDC/CI), ScreenKnob sets
    the monitor's speaker volume directly (**Options → Monitor's own volume**). This needs a USB-C / Thunderbolt /
    DisplayPort connection on some Macs: the built-in HDMI port of M1 Pro/Max/Ultra Macs doesn't carry it.
-3. **Capturing the sound (indicator shown).** Without the driver, ScreenKnob uses a system-audio tap (optionally with
-   BlackHole 2ch for the native popup). This needs the System Audio Recording permission, and macOS shows the indicator.
+3. **Capturing the sound (indicator shown).** Without the driver, ScreenKnob uses a system-audio tap. This needs the
+   System Audio Recording permission, and macOS shows the indicator.
+
+**Do I still need BlackHole?** No. Earlier versions used it; ScreenKnob now uses its own driver. If nothing else on
+your Mac uses BlackHole, you can remove it: `brew uninstall blackhole-2ch`, or
+`sudo rm -rf /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver && sudo killall coreaudiod`.
 
 ScreenKnob picks the first that works for your screen.
 
 ## Troubleshooting
 
-- **No sound after ScreenKnob was force-quit:** your output may still be set to BlackHole 2ch.
+- **No sound after ScreenKnob was force-quit:** your output may still be set to "ScreenKnob".
   Open ScreenKnob again, or pick your screen in Control Center → Sound.
 - **Volume keys don't work:** in the window, use **Reset & Ask Again** and allow ScreenKnob under Accessibility.
 - **"isn't taking sound right now":** the screen is asleep or showing another input; ScreenKnob keeps
@@ -138,10 +135,11 @@ and remove it from the Privacy & Security lists.
 
 ## How it works
 
-ScreenKnob captures the Mac's sound with a Core Audio process tap and plays it on the screen through a
-private aggregate device, scaling it by the volume you set. With the popup option on, BlackHole 2ch is set
-as the Mac's output: macOS sees a speaker with a real volume control, so its own keys, popup and click
-work, and ScreenKnob plays the sound on the screen at BlackHole's volume. All audio objects are owned by
+With its driver installed, ScreenKnob sets the "ScreenKnob" virtual speaker as the Mac's output. macOS sees a
+speaker with a real volume control, so its own keys, popup and click work. The driver copies the sound into
+shared memory, and the app plays it on the screen at that volume, gently resampling to follow the screen's
+clock. Without the driver, it captures the Mac's sound with a Core Audio process tap and plays it on the
+screen through a private aggregate device, scaling it by the volume you set. All audio objects are owned by
 one worker thread; device changes are re-read rather than cached, and failed starts are retried, which is
 what keeps it stable through sleep, wake and input switches.
 

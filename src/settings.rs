@@ -25,7 +25,7 @@ pub struct Settings {
     pub auto_return: bool,
     pub software_volume: bool,
     pub volume_keys: bool,
-    /// Route screens through a virtual speaker (BlackHole) so macOS shows its own
+    /// Route screens through ScreenKnob's virtual speaker so macOS shows its own
     /// volume popup and click, as for a real speaker.
     pub native_popup: bool,
     /// Opening at login was set up once already (it's on by default when installed).

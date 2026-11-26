@@ -91,7 +91,6 @@ pub struct Snapshot {
     pub native: bool,
     pub native_available: bool,
     pub native_active: bool,
-    pub native_needs_capture: bool,
     pub login: crate::login::Login,
     pub monitor_volume: bool,
     pub driver_installed: bool,
@@ -213,9 +212,6 @@ struct Engine {
     ddc_probed: Instant,
     hud: Option<(Instant, f32, bool, String)>,
     driver_busy: bool,
-    /// System Audio Recording allowed (needed before sound may go to the virtual speaker).
-    capture_ok: bool,
-    capture_checked: Instant,
 }
 
 pub fn start(snapshot: SharedSnapshot, passive: bool, tx: Sender<Command>, rx: Receiver<Command>) {
@@ -273,13 +269,11 @@ impl Engine {
             last_publish: now,
             show_checked: now,
             expect_default: None,
-            capture_ok: perm::audio_capture() == perm::Access::Granted,
             ddc_vol: std::collections::HashMap::new(),
             ddc: None,
             ddc_probed: now,
             hud: None,
             driver_busy: false,
-            capture_checked: now,
         }
     }
 
@@ -350,24 +344,14 @@ impl Engine {
         if !self.settings.native_popup || !self.settings.software_volume {
             return None;
         }
-        // ScreenKnob's own driver first (nothing recorded), else BlackHole.
-        self.devices
-            .iter()
-            .find(|d| devices::is_driver(d) && d.alive)
-            .or_else(|| self.devices.iter().find(|d| devices::is_proxy(d) && d.alive))
-    }
-
-    fn proxy_is_driver(&self) -> bool {
-        self.proxy().is_some_and(devices::is_driver)
+        // ScreenKnob's own driver (nothing recorded).
+        self.devices.iter().find(|d| devices::is_driver(d) && d.alive)
     }
 
     /// The screen that should play through the virtual speaker: your chosen
     /// output, when it's there and has no volume control of its own.
     fn native_target(&self) -> Option<&Device> {
         self.proxy()?;
-        if !self.capture_ok && !self.passive && !self.proxy_is_driver() {
-            return None; // until then the screen keeps its software volume
-        }
         let pref = self.settings.preferred_uid.as_deref()?;
         self.device_by_uid(pref)
             .filter(|d| d.alive && !d.hw_volume && !devices::is_proxy(d) && !self.ddc_ok(d))
@@ -507,7 +491,6 @@ impl Engine {
                 self.mark_dirty();
             }
             Command::Recheck => {
-                self.capture_ok = perm::audio_capture() == perm::Access::Granted;
                 self.next_build = Instant::now();
                 self.mark_dirty();
             }
@@ -855,17 +838,22 @@ impl Engine {
         if self.passive {
             return;
         }
-        if !self.capture_ok && self.proxy().is_some() && !self.proxy_is_driver() && self.native_target_ignoring_setting().is_some() {
-            perm::request_audio_capture(|| {
-                if let Some(tx) = TX.get() {
-                    let _ = tx.send(Command::Recheck);
-                }
-            });
-        }
         if self.pending_default.is_some() || self.restore.is_some() {
             return;
         }
         let Some(cur) = self.current().cloned() else { return };
+        // Earlier versions left BlackHole as the Mac's output: go back to your chosen screen.
+        if devices::is_blackhole(&cur) && self.screen_was_proxied() {
+            let to = self.native_target().cloned().and(self.proxy().cloned()).or_else(|| {
+                let pref = self.settings.preferred_uid.clone()?;
+                self.device_by_uid(&pref).filter(|d| d.alive).cloned()
+            });
+            if let Some(to) = to.or_else(|| self.fallback()) {
+                self.set_default(&to);
+                self.note("No longer using BlackHole");
+            }
+            return;
+        }
         match (self.native_target().cloned(), self.proxy().cloned()) {
             // Your screen, or the other virtual speaker, is the output: use the preferred stand-in.
             (Some(t), Some(p)) if cur.uid == t.uid || (devices::is_proxy(&cur) && cur.uid != p.uid) => {
@@ -981,14 +969,8 @@ impl Engine {
         }
         let vol = self.settings.volume_for(&d.uid);
         let started = match &via {
-            // The virtual speaker is the Mac's output (so macOS shows its popup and
-            // click); the sound itself is tapped and played on the screen.
             // ScreenKnob's driver shares its sound directly: nothing is recorded.
-            Some(p) if devices::is_driver(p) => Pipeline::start_ring(&d, p, proxy_gain(p)),
-            Some(p) => Pipeline::start(&d, proxy_gain(p)).map(|mut pipe| {
-                pipe.proxy_uid = Some(p.uid.clone());
-                pipe
-            }),
+            Some(p) => Pipeline::start_ring(&d, p, proxy_gain(p)),
             None => Pipeline::start(&d, gain_for(vol.volume, vol.muted)),
         };
         match started {
@@ -1074,13 +1056,6 @@ impl Engine {
             }
         }
 
-        if !self.passive && !self.capture_ok && now.duration_since(self.capture_checked) >= Duration::from_secs(2) {
-            self.capture_checked = now;
-            if perm::audio_capture() == perm::Access::Granted {
-                self.capture_ok = true;
-                self.mark_dirty();
-            }
-        }
         if !self.passive && now.duration_since(self.show_checked) >= Duration::from_millis(500) {
             self.show_checked = now;
             if perm::take_show_request() {
@@ -1194,9 +1169,6 @@ impl Engine {
                     (Some(p), None) if native_active && p.uses_driver() => {
                         (format!("{} uses the macOS volume controls (ScreenKnob driver, nothing recorded)", d.name), true)
                     }
-                    (Some(_), None) if native_active => {
-                        (format!("{} uses the macOS volume controls (through BlackHole 2ch)", d.name), true)
-                    }
                     (Some(_), None) => (format!("Software volume is on for {}", d.name), true),
                     (None, None) if self.passive => (format!("Software volume for {}", d.name), true),
                     (None, None) => (format!("Starting software volume for {}…", d.name), true),
@@ -1227,7 +1199,7 @@ impl Engine {
             s.driver_busy = self.driver_busy;
             s.hud = self.hud.clone();
             s.login = if self.passive { crate::login::Login::Unavailable } else { crate::login::status() };
-            s.native_needs_capture = !self.capture_ok && !self.passive && self.settings.native_popup;
+
             s.log = self.log.iter().cloned().collect();
         }
         if let Some(f) = REPAINT.get() {

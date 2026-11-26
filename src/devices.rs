@@ -128,10 +128,15 @@ pub fn set_hw_mute(dev: &Device, muted: bool) -> bool {
 /// UID of ScreenKnob's own virtual speaker (driver/ScreenKnobAudio.c).
 pub const DRIVER_UID: &str = "ScreenKnob_Device";
 
-/// A virtual speaker standing in for a screen: ScreenKnob's own driver, or the
-/// free BlackHole driver. macOS gives either a real volume control.
+/// A virtual speaker standing in for a screen: ScreenKnob's own driver, which
+/// macOS gives a real volume control.
 pub fn is_proxy(d: &Device) -> bool {
-    is_driver(d) || d.uid.starts_with("BlackHole2ch") || (d.transport == ca::TRANSPORT_VIRTUAL && d.name == "BlackHole 2ch")
+    is_driver(d)
+}
+
+/// BlackHole, which earlier versions used as the stand-in speaker.
+pub fn is_blackhole(d: &Device) -> bool {
+    d.uid.starts_with("BlackHole") || (d.transport == ca::TRANSPORT_VIRTUAL && d.name.starts_with("BlackHole"))
 }
 
 /// ScreenKnob's own driver: its sound is shared directly, so nothing is recorded.

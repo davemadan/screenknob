@@ -288,7 +288,7 @@ impl Ui {
             separator(ui, pal);
             let mut n = snap.native;
             let native_note = if !snap.native_available {
-                "Needs ScreenKnob's driver (below) or BlackHole 2ch"
+                "Needs ScreenKnob's sound driver (install below)"
             } else {
                 "Native popup, keys and click for screens"
             };
@@ -312,14 +312,6 @@ impl Ui {
                                 self.send(Command::Driver(true));
                             }
                         });
-                    }
-                });
-            }
-            if snap.native && snap.native_available && snap.native_needs_capture {
-                row(ui, |ui| {
-                    ui.label(RichText::new("Needs System Audio Recording permission.").size(11.5).color(pal.warn));
-                    if ui.button("Open Privacy & Security…").clicked() {
-                        perm::open_privacy("Privacy_AudioCapture");
                     }
                 });
             }
