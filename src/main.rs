@@ -2,6 +2,7 @@
 //! DisplayPort screens that have no volume control of their own.
 
 mod ca;
+mod ddc;
 mod devices;
 mod diag;
 mod engine;
@@ -53,15 +54,29 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
-        if let Some(t) = self.tray.as_mut() {
-            if let Ok(snap) = self.snapshot.lock().map(|s| s.clone()) {
+        if let Ok(snap) = self.snapshot.lock().map(|s| s.clone()) {
+            if let Some(t) = self.tray.as_mut() {
                 t.update(&snap);
+            }
+            // Keep drawing while the popup is up, even with the window closed.
+            if snap.hud.as_ref().is_some_and(|h| h.0.elapsed().as_secs_f32() <= ui::HUD_SECS + 0.1) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+                ctx.request_repaint();
             }
         }
     }
 
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0] // the volume popup's corners stay see-through
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.ui.draw(ui);
+        if self.shot.is_none() {
+            if let Ok(snap) = self.snapshot.lock().map(|s| s.clone()) {
+                ui::hud(ui.ctx(), &snap);
+            }
+        }
         let Some(path) = self.shot.clone() else { return };
         let ctx = ui.ctx().clone();
         self.frames += 1;
@@ -104,6 +119,12 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
     let passive = shot.is_some();
+    if args.iter().any(|a| a == "--ddc-status") {
+        for m in ddc::monitors() {
+            println!("{}: speaker volume {:?}", m.name, m.volume());
+        }
+        std::process::exit(0);
+    }
     if args.iter().any(|a| a == "--login-status") {
         println!("installed {}: open at login {:?}", login::installed(), login::status());
         std::process::exit(0);
@@ -156,7 +177,7 @@ fn main() -> eframe::Result<()> {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("ScreenKnob")
-        .with_inner_size([440.0, 720.0])
+        .with_inner_size([440.0, 800.0])
         .with_min_inner_size([380.0, 420.0])
         .with_fullsize_content_view(true)
         .with_titlebar_shown(false)

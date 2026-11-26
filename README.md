@@ -94,11 +94,31 @@ System Settings → General → Login Items.
 - Click the speaker icon in the menu bar for Louder / Quieter / Mute, or **Open ScreenKnob…** for the window.
 - In the window, pick the output under **Output device**, set the level with the slider, and switch options:
   - **Software volume** — volume for screens without their own control.
+  - **Monitor's own volume** — set the screen's speakers over its cable when it allows it (no recording indicator).
   - **macOS volume popup** — routes screens through BlackHole 2ch so macOS shows its own popup and click.
     While this is on, your Mac's sound output shows as "BlackHole 2ch"; that's expected.
   - **Volume keys** — the keyboard keys for those screens (when the popup option is off).
   - **Return to chosen output** — switch back to your screen after it sleeps, wakes or changes input.
 - **Quit** from the menu bar icon. Quitting hands the sound back to your screen directly.
+
+## About the recording indicator
+
+When ScreenKnob changes a screen's volume in software, it has to pass the Mac's sound through itself,
+and macOS always shows its recording indicator (next to the clock) while an app does that. ScreenKnob
+records nothing, but macOS can't tell the difference, and apps can't hide the indicator.
+
+To avoid it, ScreenKnob can set the **monitor's own speaker volume over the display cable** (DDC/CI)
+instead: no sound passes through ScreenKnob, so no indicator. This is on by default (**Options →
+Monitor's own volume**) and is used for any screen that answers. It needs:
+
+- a monitor that allows volume control over DDC/CI (most do; it may need "DDC/CI" switched on in the
+  monitor's own menu), and
+- a connection that carries DDC: USB-C / Thunderbolt / DisplayPort ports work. The **built-in HDMI port
+  of some Apple silicon Macs** (for example M1 Pro/Max/Ultra models) doesn't carry it; connect the screen
+  with a USB-C-to-HDMI or USB-C-to-DisplayPort cable instead.
+
+In this mode the volume keys show ScreenKnob's own volume popup (top right) and play the macOS click.
+Screens that don't answer keep working the other way, with the indicator.
 
 ## Troubleshooting
 

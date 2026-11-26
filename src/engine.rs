@@ -40,6 +40,11 @@ pub enum Command {
     SetKeys(bool),
     SetNative(bool),
     SetLogin(bool),
+    SetMonitorVolume(bool),
+    /// Screens found over their cable, with their speaker volume (None: no answer).
+    DdcReport(Vec<(String, Option<f32>)>),
+    /// A volume key: step (0 for mute), and whether Shift was held.
+    Key(f32, bool),
     /// Look again (e.g. after a permission answer).
     Recheck,
 }
@@ -47,6 +52,8 @@ pub enum Command {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     Hardware,
+    /// The screen's own speaker volume, set over its cable (no sound is captured).
+    Monitor,
     Software,
     Unavailable,
 }
@@ -83,6 +90,9 @@ pub struct Snapshot {
     pub native_active: bool,
     pub native_needs_capture: bool,
     pub login: crate::login::Login,
+    pub monitor_volume: bool,
+    /// The volume popup to show: when, level, muted, output name.
+    pub hud: Option<(Instant, f32, bool, String)>,
     pub level: f32,
     pub log: Vec<(Instant, String)>,
 }
@@ -144,6 +154,21 @@ fn proxy_gain(proxy: &Device) -> f32 {
     gain_for(v, devices::hw_muted(proxy).unwrap_or(false))
 }
 
+/// macOS's own volume click, when "Play feedback when volume is changed" is on
+/// (Shift flips it, as with a real speaker).
+fn play_feedback(shift: bool) {
+    let on = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "com.apple.sound.beep.feedback"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+        .unwrap_or(false);
+    if on != shift {
+        let _ = std::process::Command::new("/usr/bin/afplay")
+            .arg("/System/Library/LoginPlugins/BezelServices.loginPlugin/Contents/Resources/volume.aiff")
+            .spawn();
+    }
+}
+
 struct Restore {
     uid: String,
     attempts_left: u32,
@@ -176,6 +201,11 @@ struct Engine {
     show_checked: Instant,
     /// A default-output change this app made itself (not to be read as your choice).
     expect_default: Option<(u32, Instant)>,
+    /// Screens that answered over their cable: name → speaker volume (0..1).
+    ddc_vol: std::collections::HashMap<String, f32>,
+    ddc: Option<Sender<crate::ddc::Req>>,
+    ddc_probed: Instant,
+    hud: Option<(Instant, f32, bool, String)>,
     /// System Audio Recording allowed (needed before sound may go to the virtual speaker).
     capture_ok: bool,
     capture_checked: Instant,
@@ -237,11 +267,24 @@ impl Engine {
             show_checked: now,
             expect_default: None,
             capture_ok: perm::audio_capture() == perm::Access::Granted,
+            ddc_vol: std::collections::HashMap::new(),
+            ddc: None,
+            ddc_probed: now,
+            hud: None,
             capture_checked: now,
         }
     }
 
     fn run(&mut self, rx: &Receiver<Command>) {
+        if !self.passive {
+            let ddc = crate::ddc::start(|found| {
+                if let Some(tx) = TX.get() {
+                    let _ = tx.send(Command::DdcReport(found));
+                }
+            });
+            let _ = ddc.send(crate::ddc::Req::Probe);
+            self.ddc = Some(ddc);
+        }
         let sys = ca::kAudioObjectSystemObject;
         ca::add_listener(sys, Addr::new(ca::PROP_DEVICES, ca::SCOPE_GLOBAL, ca::ELEMENT_MAIN), hal_listener);
         ca::add_listener(sys, Addr::new(ca::PROP_DEFAULT_OUTPUT, ca::SCOPE_GLOBAL, ca::ELEMENT_MAIN), hal_listener);
@@ -310,7 +353,8 @@ impl Engine {
             return None; // until then the screen keeps its software volume
         }
         let pref = self.settings.preferred_uid.as_deref()?;
-        self.device_by_uid(pref).filter(|d| d.alive && !d.hw_volume && !devices::is_proxy(d))
+        self.device_by_uid(pref)
+            .filter(|d| d.alive && !d.hw_volume && !devices::is_proxy(d) && !self.ddc_ok(d))
     }
 
     fn default_is_proxy(&self) -> bool {
@@ -364,9 +408,16 @@ impl Engine {
         self.devices.iter().find(|d| d.uid == uid)
     }
 
+    /// The screen answers over its cable and you want its own volume used.
+    fn ddc_ok(&self, d: &Device) -> bool {
+        self.settings.monitor_volume && !d.hw_volume && self.ddc_vol.contains_key(&d.name)
+    }
+
     fn mode_of(&self, d: &Device) -> Mode {
         if d.hw_volume {
             Mode::Hardware
+        } else if self.ddc_ok(d) {
+            Mode::Monitor
         } else if self.settings.software_volume {
             Mode::Software
         } else {
@@ -379,6 +430,9 @@ impl Engine {
             Command::Hal(sel) => match sel {
                 ca::PROP_DEVICES => {
                     self.last_devices_change = Some(Instant::now());
+                    if let Some(tx) = &self.ddc {
+                        let _ = tx.send(crate::ddc::Req::Probe);
+                    }
                     self.mark_dirty();
                 }
                 ca::PROP_DEFAULT_OUTPUT => {
@@ -461,6 +515,36 @@ impl Engine {
                 }
                 self.publish();
             }
+            Command::SetMonitorVolume(b) => {
+                self.settings.monitor_volume = b;
+                self.save_soon();
+                self.mark_dirty();
+            }
+            Command::DdcReport(found) => {
+                let before: HashSet<String> = self.ddc_vol.keys().cloned().collect();
+                self.ddc_vol = found.iter().filter_map(|(n, v)| v.map(|v| (n.clone(), v))).collect();
+                for n in self.ddc_vol.keys().filter(|n| !before.contains(*n)).cloned().collect::<Vec<_>>() {
+                    self.note(format!("{n}: using the monitor's own volume"));
+                }
+                self.mark_dirty();
+            }
+            Command::Key(step, shift) => {
+                let Some(d) = self.target().cloned() else { return };
+                if step == 0.0 {
+                    let m = !self.muted_of(&d.uid);
+                    self.set_mute(&d.uid, m);
+                } else {
+                    let v = self.volume_of(&d.uid) + step;
+                    self.set_volume(&d.uid, v);
+                    if self.muted_of(&d.uid) && step > 0.0 {
+                        self.set_mute(&d.uid, false);
+                    }
+                    play_feedback(shift);
+                }
+                let (v, m) = (self.volume_of(&d.uid), self.muted_of(&d.uid));
+                self.hud = Some((Instant::now(), v, m, d.name.clone()));
+                self.publish();
+            }
             Command::SetKeys(b) => {
                 self.settings.volume_keys = b;
                 self.save_soon();
@@ -475,6 +559,10 @@ impl Engine {
     }
 
     fn volume_of(&self, uid: &str) -> f32 {
+        if let Some(d) = self.device_by_uid(uid).filter(|d| self.ddc_ok(d)) {
+            let saved = self.settings.volume_for(uid);
+            return if saved.muted { saved.volume } else { self.ddc_vol.get(&d.name).copied().unwrap_or(0.0) };
+        }
         match self.volume_device(uid).as_ref() {
             Some(d) if d.hw_volume => devices::hw_volume(d).unwrap_or(0.0),
             _ => self.settings.volume_for(uid).volume,
@@ -482,6 +570,9 @@ impl Engine {
     }
 
     fn muted_of(&self, uid: &str) -> bool {
+        if self.device_by_uid(uid).is_some_and(|d| self.ddc_ok(d)) {
+            return self.settings.volume_for(uid).muted;
+        }
         match self.volume_device(uid).as_ref() {
             Some(d) if d.hw_mute => devices::hw_muted(d).unwrap_or(false),
             _ => self.settings.volume_for(uid).muted,
@@ -490,6 +581,21 @@ impl Engine {
 
     fn set_volume(&mut self, uid: &str, v: f32) {
         let v = v.clamp(0.0, 1.0);
+        if let Some(d) = self.device_by_uid(uid).filter(|d| self.ddc_ok(d)).cloned() {
+            // Set on the monitor itself (rounded to its own steps by the worker).
+            self.ddc_vol.insert(d.name.clone(), v);
+            let e = self.settings.volumes.entry(uid.to_string()).or_default();
+            e.volume = v;
+            let muted = e.muted;
+            if !muted && !self.passive {
+                if let Some(tx) = &self.ddc {
+                    let _ = tx.send(crate::ddc::Req::Set(d.name.clone(), v));
+                }
+            }
+            self.save_soon();
+            self.publish();
+            return;
+        }
         let dev = self.volume_device(uid);
         match dev {
             Some(d) if d.hw_volume => {
@@ -511,6 +617,27 @@ impl Engine {
     }
 
     fn set_mute(&mut self, uid: &str, m: bool) {
+        if let Some(d) = self.device_by_uid(uid).filter(|d| self.ddc_ok(d)).cloned() {
+            // Monitors rarely support mute over the cable: go to 0 and back.
+            let cur = self.ddc_vol.get(&d.name).copied().unwrap_or(0.0);
+            let e = self.settings.volumes.entry(uid.to_string()).or_default();
+            if m && !e.muted {
+                e.volume = cur;
+            }
+            e.muted = m;
+            let level = if m { 0.0 } else { e.volume };
+            if !m {
+                self.ddc_vol.insert(d.name.clone(), level);
+            }
+            if !self.passive {
+                if let Some(tx) = &self.ddc {
+                    let _ = tx.send(crate::ddc::Req::Set(d.name.clone(), level));
+                }
+            }
+            self.save_soon();
+            self.publish();
+            return;
+        }
         let dev = self.volume_device(uid);
         match dev {
             Some(d) if d.hw_mute => {
@@ -765,7 +892,8 @@ impl Engine {
             PROXY_ID.store(0, Ordering::Relaxed);
         }
         // Through the virtual speaker macOS handles the keys itself.
-        let catch = !self.passive && self.settings.volume_keys && want.is_some() && !native;
+        let monitor_mode = self.target().is_some_and(|d| self.mode_of(d) == Mode::Monitor);
+        let catch = !self.passive && self.settings.volume_keys && ((want.is_some() && !native) || monitor_mode);
         keys::CATCH_KEYS.store(catch, Ordering::Relaxed);
         if catch && !keys::trusted() {
             keys::prompt_once();
@@ -915,6 +1043,17 @@ impl Engine {
                 }
             }
         }
+        if let Some(tx) = &self.ddc {
+            let silent = self
+                .devices
+                .iter()
+                .any(|d| !d.hw_volume && !devices::is_proxy(d) && d.transport != ca::TRANSPORT_VIRTUAL && !self.ddc_vol.contains_key(&d.name));
+            let every = if silent { Duration::from_secs(20) } else { Duration::from_secs(120) };
+            if self.settings.monitor_volume && now.duration_since(self.ddc_probed) >= every {
+                self.ddc_probed = now;
+                let _ = tx.send(crate::ddc::Req::Probe);
+            }
+        }
         if self.save_at.is_some_and(|t| now >= t) {
             self.save_at = None;
             self.settings.save();
@@ -998,6 +1137,7 @@ impl Engine {
             None => ("No sound output found".to_string(), false),
             Some(d) => match self.mode_of(d) {
                 Mode::Hardware => (format!("{} uses its own volume control", d.name), true),
+                Mode::Monitor => (format!("{}: volume set on the monitor itself (no recording)", d.name), true),
                 Mode::Unavailable => (format!("{} has no volume control. Turn on software volume below.", d.name), false),
                 Mode::Software if self.perm_message.is_some() && !self.passive => {
                     (self.perm_message.clone().unwrap_or_default(), false)
@@ -1031,6 +1171,8 @@ impl Engine {
             s.native = self.settings.native_popup;
             s.native_available = self.devices.iter().any(devices::is_proxy);
             s.native_active = native_active;
+            s.monitor_volume = self.settings.monitor_volume;
+            s.hud = self.hud.clone();
             s.login = if self.passive { crate::login::Login::Unavailable } else { crate::login::status() };
             s.native_needs_capture = !self.capture_ok && !self.passive && self.settings.native_popup;
             s.log = self.log.iter().cloned().collect();

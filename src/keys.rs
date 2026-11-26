@@ -114,10 +114,11 @@ fn handle_event(_proxy: *mut c_void, kind: u32, event: EventRef, _user: *mut c_v
     if down {
         let flags = unsafe { CGEventGetFlags(event) };
         let step = if flags & FLAG_SHIFT != 0 && flags & FLAG_OPTION != 0 { FINE_STEP } else { STEP };
+        let shift = flags & FLAG_SHIFT != 0 && flags & FLAG_OPTION == 0;
         let cmd = match key {
-            NX_KEYTYPE_SOUND_UP => Command::StepVolume(step),
-            NX_KEYTYPE_SOUND_DOWN => Command::StepVolume(-step),
-            _ => Command::ToggleMuteCurrent,
+            NX_KEYTYPE_SOUND_UP => Command::Key(step, shift),
+            NX_KEYTYPE_SOUND_DOWN => Command::Key(-step, shift),
+            _ => Command::Key(0.0, shift),
         };
         if let Some(tx) = TX.get() {
             let _ = tx.send(cmd);

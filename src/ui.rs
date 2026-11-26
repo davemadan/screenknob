@@ -281,6 +281,11 @@ impl Ui {
                 self.send(Command::SetSoftware(sw));
             }
             separator(ui, pal);
+            let mut mv = snap.monitor_volume;
+            if option_row(ui, pal, "Monitor's own volume", "Over the cable when the screen allows it; no recording dot", &mut mv) {
+                self.send(Command::SetMonitorVolume(mv));
+            }
+            separator(ui, pal);
             let mut n = snap.native;
             let native_note = if !snap.native_available {
                 "Needs the free BlackHole 2ch driver"
@@ -450,6 +455,7 @@ fn device_row(ui: &mut egui::Ui, d: &DeviceView, pal: Pal) -> egui::Response {
     p.with_clip_rect(clip).text(Pos2::new(name_x, inner.center().y), egui::Align2::LEFT_CENTER, &d.name, font.clone(), fg);
     let kind = match d.mode {
         Mode::Software => format!("{} · software", d.kind),
+        Mode::Monitor => format!("{} · monitor", d.kind),
         _ => d.kind.to_string(),
     };
     p.text(Pos2::new(type_x, inner.center().y), egui::Align2::LEFT_CENTER, kind, small.clone(), sub);
@@ -573,4 +579,72 @@ fn ago(t: Instant) -> String {
         60..=3599 => format!("{}m ago", s / 60),
         _ => format!("{}h ago", s / 3600),
     }
+}
+
+/// How long the volume popup stays up after a key press.
+pub const HUD_SECS: f32 = 1.6;
+
+/// A volume popup in the style of macOS's own (top right of the screen), for
+/// outputs macOS can't show one for: icon, level bar and the output's name.
+pub fn hud(ctx: &egui::Context, snap: &Snapshot) {
+    let Some((at, level, muted, name)) = snap.hud.clone() else { return };
+    let age = at.elapsed().as_secs_f32();
+    if age > HUD_SECS {
+        return;
+    }
+    let size = Vec2::new(300.0, 64.0);
+    let screen = ctx.input(|i| i.viewport().monitor_size).unwrap_or(Vec2::new(1440.0, 900.0));
+    let builder = egui::ViewportBuilder::default()
+        .with_title("ScreenKnob volume")
+        .with_inner_size(size)
+        .with_position(Pos2::new(screen.x - size.x - 14.0, 38.0))
+        .with_decorations(false)
+        .with_transparent(true)
+        .with_has_shadow(false)
+        .with_resizable(false)
+        .with_always_on_top()
+        .with_mouse_passthrough(true)
+        .with_active(false)
+        .with_taskbar(false);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("screenknob-hud"), builder, |ui, _| {
+        let dark = ui.visuals().dark_mode;
+        let pal = Pal::of(ui);
+        // Fade out over the last quarter second.
+        let fade = ((HUD_SECS - age) / 0.25).clamp(0.0, 1.0);
+        let rect = ui.max_rect().shrink(2.0);
+        let p = ui.painter();
+        let bg = if dark { Color32::from_rgba_unmultiplied(38, 38, 40, (235.0 * fade) as u8) } else {
+            Color32::from_rgba_unmultiplied(246, 246, 248, (240.0 * fade) as u8)
+        };
+        p.rect_filled(rect, 18.0, bg);
+        p.rect_stroke(rect, 18.0, Stroke::new(0.5, Color32::from_white_alpha((40.0 * fade) as u8)), StrokeKind::Inside);
+        let fg = pal.text.gamma_multiply(fade);
+        let dim = pal.dim.gamma_multiply(fade);
+        p.text(Pos2::new(rect.left() + 16.0, rect.top() + 17.0), egui::Align2::LEFT_CENTER, &name,
+            egui::FontId::proportional(12.0), dim);
+        // Speaker icon, then the level bar.
+        let icon_c = Pos2::new(rect.left() + 24.0, rect.top() + 42.0);
+        let body = vec![
+            icon_c + Vec2::new(-6.0, -3.0),
+            icon_c + Vec2::new(-2.0, -3.0),
+            icon_c + Vec2::new(3.0, -7.5),
+            icon_c + Vec2::new(3.0, 7.5),
+            icon_c + Vec2::new(-2.0, 3.0),
+            icon_c + Vec2::new(-6.0, 3.0),
+        ];
+        p.add(egui::Shape::convex_polygon(body, fg, Stroke::NONE));
+        if muted || level <= 0.001 {
+            let x = icon_c + Vec2::new(9.0, 0.0);
+            p.line_segment([x + Vec2::new(-3.0, -3.0), x + Vec2::new(3.0, 3.0)], Stroke::new(1.6, fg));
+            p.line_segment([x + Vec2::new(-3.0, 3.0), x + Vec2::new(3.0, -3.0)], Stroke::new(1.6, fg));
+        }
+        let bar = Rect::from_min_max(Pos2::new(rect.left() + 46.0, icon_c.y - 3.5), Pos2::new(rect.right() - 18.0, icon_c.y + 3.5));
+        p.rect_filled(bar, 3.5, if dark { Color32::from_white_alpha((50.0 * fade) as u8) } else { Color32::from_black_alpha((30.0 * fade) as u8) });
+        let shown = if muted { 0.0 } else { level.clamp(0.0, 1.0) };
+        if shown > 0.0 {
+            let mut fill = bar;
+            fill.set_width((bar.width() * shown).max(7.0));
+            p.rect_filled(fill, 3.5, fg);
+        }
+    });
 }

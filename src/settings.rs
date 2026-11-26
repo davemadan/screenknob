@@ -30,6 +30,9 @@ pub struct Settings {
     pub native_popup: bool,
     /// Opening at login was set up once already (it's on by default when installed).
     pub login_set_up: bool,
+    /// Set the screen's own speaker volume over its cable when it supports it
+    /// (no sound is captured, so no recording indicator).
+    pub monitor_volume: bool,
     pub volumes: HashMap<String, DeviceVolume>,
 }
 
@@ -42,6 +45,7 @@ impl Default for Settings {
             volume_keys: true,
             native_popup: true,
             login_set_up: false,
+            monitor_volume: true,
             volumes: HashMap::new(),
         }
     }
